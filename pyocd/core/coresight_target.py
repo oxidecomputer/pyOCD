@@ -18,7 +18,7 @@ import logging
 import six
 
 from .target import Target
-from .memory_map import MemoryType
+from .memory_map import MemoryType, DeviceRegion
 from . import exceptions
 from ..flash.eraser import FlashEraser
 from ..coresight import (dap, discovery, cortex_m, cortex_m_v8m, rom_table)
@@ -135,6 +135,7 @@ class CoreSightTarget(Target, GraphNode):
     def create_init_sequence(self):
         seq = CallSequence(
             ('load_svd',            self.load_svd),
+            ('map_peripherals',     self.map_peripherals),
             ('pre_connect',         self.pre_connect),
             ('dp_init',             self.dp.init_sequence),
             ('create_discoverer',   self.create_discoverer),
@@ -159,7 +160,28 @@ class CoreSightTarget(Target, GraphNode):
         self.call_delegate('will_init_target', target=self, init_sequence=seq)
         seq.invoke()
         self.call_delegate('did_init_target', target=self)
-            
+
+    def map_peripherals(self):
+        for p in self.svd_device.peripherals:
+
+            region = DeviceRegion(
+                name=p.name,
+                start=p.base_address + p.address_block.offset,
+                length=p.address_block.size
+            )
+
+            is_contained = False
+            for r in self.memory_map.get_intersecting_regions(0, range=region):
+                LOG.debug("Peripheral %s overlaps with range %s", region, r)
+                if r.contains_range(0, range=region):
+                    is_contained = True
+                    break
+                else:
+                    LOG.warning('Peripheral %s overlaps but is not contained by region %s', region, r)
+
+            if not is_contained:
+                self.memory_map.add_region(region)
+
     def create_discoverer(self):
         """! @brief Init task to create the discovery object.
         
